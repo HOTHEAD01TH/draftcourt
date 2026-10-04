@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>draftcourt</title>
+<style>
+  :root {
+    --bg: #10141a; --panel: #181e27; --panel-2: #12171f; --line: #2c3644;
+    --text: #e8eef7; --muted: #9aa8bc; --accent: #e6c36a; --ok: #3dd68c; --warn: #f0b429; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 ui-sans-serif, system-ui, sans-serif; }
+  header, main { width: min(860px, calc(100% - 32px)); margin: 0 auto; }
+  header { padding: 28px 0 8px; display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; }
+  h1 { margin: 0; font-size: 32px; letter-spacing: -0.03em; }
+  h2 { margin: 16px 0 8px; font-size: 18px; }
+  .kicker { color: var(--accent); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 6px; }
+  .lede, .meta { color: var(--muted); }
+  .mode { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 12px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  textarea, button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  textarea { width: 100%; min-height: 160px; resize: vertical; }
+  .actions { display: flex; gap: 10px; margin: 12px 0 20px; flex-wrap: wrap; }
+  button { background: var(--accent); color: #1a1406; border: 0; font-weight: 650; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 28px; }
+  .banner { font-size: 20px; font-weight: 700; margin: 0 0 8px; }
+  .unsure { color: var(--warn); }
+  .scored { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  tr.abstain { background: #3a1616; }
+  .original { white-space: pre-wrap; background: var(--panel-2); border-radius: 10px; padding: 10px; margin: 8px 0 0; }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <p class="kicker">draft scorecard</p>
+    <h1>draftcourt</h1>
+    <p class="lede">Fixed noul and score questions on one pasted draft. The scorecard does not rewrite the draft and does not offer replacement copy.</p>
+  </div>
+  <div class="mode" id="mode" role="status">Laya not running</div>
+</header>
+<main>
+  <form id="form">
+    <textarea id="text" name="text" maxlength="20000">Paperlane Inbox sorts incoming notes into a queue a person can review. Teams who already live in email should find the layout familiar. A setup guide is not linked from this post.</textarea>
+    <div class="actions">
+      <button type="submit">Score</button>
+      <button type="button" id="confirm" class="ghost" disabled>Confirm</button>
+    </div>
+  </form>
+  <section id="card" class="card" hidden></section>
+</main>
+<script>
+const form = document.querySelector("#form");
+const text = document.querySelector("#text");
+const confirmBtn = document.querySelector("#confirm");
+const cardEl = document.querySelector("#card");
+const mode = document.querySelector("#mode");
+const DOWN = "Laya not running";
+let current = null;
+
+function render(card) {
+  current = card;
+  cardEl.hidden = false;
+  cardEl.replaceChildren();
+  const banner = document.createElement("p");
+  banner.className = "banner " + (card.unsure ? "unsure" : "scored");
+  banner.textContent = card.unsure ? "unsure" : "scored";
+  const meta = document.createElement("p");
+  meta.className = "meta";
+  meta.textContent = (card.model || "laya") + (card.confirmed ? " · confirmed by a person" : " · not confirmed");
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const label of ["Question", "Result", "Confidence"]) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    head.append(th);
+  }
+  table.append(head);
+  for (const row of card.rows || []) {
+    const tr = document.createElement("tr");
+    if (row.abstained) tr.className = "abstain";
+    const a = document.createElement("td");
+    a.textContent = row.name;
+    const b = document.createElement("td");
+    if (row.abstained) b.textContent = "abstain";
+    else if (row.kind === "score") b.textContent = row.level + " (" + Number(row.value).toFixed(2) + ")";
+    else b.textContent = Number(row.noul).toFixed(2);
+    const c = document.createElement("td");
+    c.textContent = typeof row.confidence === "number" ? Number(row.confidence).toFixed(2) : "—";
+    tr.append(a, b, c);
+    table.append(tr);
+  }
+  const h = document.createElement("h2");
+  h.textContent = "Original draft";
+  const pre = document.createElement("pre");
+  pre.className = "original";
+  pre.textContent = card.text;
+  cardEl.append(banner, meta, table, h, pre);
+  confirmBtn.disabled = card.confirmed;
+  confirmBtn.textContent = card.confirmed ? "Confirmed" : "Confirm";
+}
+
+async function checkHealth() {
+  try {
+    const res = await fetch("/api/health");
+    if (!res.ok) mode.textContent = DOWN;
+    else mode.textContent = "laya ready";
+  } catch {
+    mode.textContent = DOWN;
+  }
+}
+
+form.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  mode.textContent = "loading model";
+  try {
+    const res = await fetch("/api/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      mode.textContent = data.error === DOWN || res.status === 503 ? DOWN : (data.error || DOWN);
+      return;
+    }
+    mode.textContent = "laya";
+    render(data.card);
+  } catch {
+    mode.textContent = DOWN;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+confirmBtn.addEventListener("click", async () => {
+  if (!current) return;
+  confirmBtn.disabled = true;
+  try {
+    const res = await fetch("/api/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: current.id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "confirm failed");
+    render(data.card);
+  } catch (err) {
+    confirmBtn.disabled = false;
+    const errEl = document.createElement("p");
+    errEl.className = "err";
+    errEl.textContent = err instanceof Error ? err.message : "confirm failed";
+    cardEl.append(errEl);
+  }
+});
+
+checkHealth();
+</script>
+</body>
+</html>
